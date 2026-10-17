@@ -1,0 +1,16 @@
+{
+  "name": "com.basis.integration.ltcgi",
+  "displayName": "Basis LTCGI Integration",
+  "version": "0.0.1",
+  "description": "Feeds a Basis media player's video into LTCGI, so its screen lights the room with what's playing, on desktop and on Quest. Optional bolt-on: compiles to nothing unless both com.basis.mediaplayer and at.pimaker.ltcgi are present.",
+  "author": {
+    "name": "BasisVR",
+    "url": "https://github.com/BasisVR"
+  },
+  "license": "MIT OR Apache-2.0",
+  "basis": "2026-07-08",
+  "vpmDependencies": {
+    "com.basis.mediaplayer": "0.0.1",
+    "com.basis.sdk": "0.0.1"
+  }
+}

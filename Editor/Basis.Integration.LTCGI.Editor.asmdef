@@ -1,0 +1,35 @@
+{
+    "name": "Basis.Integration.LTCGI.Editor",
+    "rootNamespace": "Basis.Integration.LTCGI.Editor",
+    "references": [
+        "Basis.Integration.LTCGI",
+        "BasisMediaPlayer",
+        "LTCGI_Assembly",
+        "at.pimaker.ltcgi.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "BASIS_MEDIAPLAYER_EXISTS",
+        "LTCGI_EXISTS"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.basis.mediaplayer",
+            "expression": "",
+            "define": "BASIS_MEDIAPLAYER_EXISTS"
+        },
+        {
+            "name": "at.pimaker.ltcgi",
+            "expression": "",
+            "define": "LTCGI_EXISTS"
+        }
+    ],
+    "noEngineReferences": false
+}
