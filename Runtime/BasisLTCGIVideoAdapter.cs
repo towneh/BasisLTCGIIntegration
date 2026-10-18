@@ -29,6 +29,9 @@ namespace Basis.Integration.LTCGI
         [Tooltip("LTCGI runtime adapter to feed. If unassigned, the first one in the scene is used.")]
         public LTCGI_UdonAdapter Target;
 
+        [Tooltip("The screen output the light matches: its flips, projection and placeholder. If unassigned, the first BasisVideoMaterialOutput under the player is used.")]
+        public BasisVideoMaterialOutput Output;
+
         [Tooltip("Longest side of the texture handed to LTCGI, in pixels. Larger sources are scaled down. Area light and glossy reflections rarely need more.")]
         [Min(16)] public int MaxResolution = 1024;
 
@@ -44,6 +47,8 @@ namespace Basis.Integration.LTCGI
         private Texture source;
         private long blittedFrame = -1;
         private Rect blittedRect;
+        private Texture bound;
+        private bool ended;
 
         private static readonly int IdMainTex = Shader.PropertyToID("_MainTex");
         private static readonly int IdLod0 = Shader.PropertyToID("_Udon_LTCGI_Texture_LOD0");
@@ -84,13 +89,14 @@ namespace Basis.Integration.LTCGI
                 return;
             }
 
-            output = Player.GetComponentInChildren<BasisVideoMaterialOutput>(true);
+            output = Output != null ? Output : Player.GetComponentInChildren<BasisVideoMaterialOutput>(true);
             if (output == null)
-                BasisDebug.LogWarning($"BasisLTCGIVideoAdapter on '{name}': no BasisVideoMaterialOutput under the player. Using Mono projection and no flips.", BasisDebug.LogTag.Video);
+                BasisDebug.LogWarning($"BasisLTCGIVideoAdapter on '{name}': no BasisVideoMaterialOutput under the player. Using Mono projection, no flips and black when there's no picture.", BasisDebug.LogTag.Video);
 
             active = this;
             subscribed = Player;
             subscribed.OnOutputTextureChanged += HandleTextureChanged;
+            subscribed.OnEnded += HandleEnded;
             BasisEventDriver.OnLateUpdate += SimulateLateUpdate;
             HandleTextureChanged(subscribed.OutputTexture);
         }
@@ -99,26 +105,33 @@ namespace Basis.Integration.LTCGI
         {
             if (active == this) active = null;
             BasisEventDriver.OnLateUpdate -= SimulateLateUpdate;
-            if (subscribed != null) subscribed.OnOutputTextureChanged -= HandleTextureChanged;
+            if (subscribed != null)
+            {
+                subscribed.OnOutputTextureChanged -= HandleTextureChanged;
+                subscribed.OnEnded -= HandleEnded;
+            }
             subscribed = null;
             output = null;
             source = null;
+            ended = false;
             // Hand LTCGI back its own texture before releasing ours, so nothing samples a
             // destroyed RenderTexture.
-            if (rt != null) Bind(ControllerVideoTexture);
+            if (bound != null) Bind(ControllerVideoTexture);
+            bound = null;
             ReleaseRT();
         }
 
-        // The video texture the LTCGI controller was baked with, shown when no video plays.
+        // The video texture the LTCGI controller was baked with, handed back when the adapter stops.
         private Texture ControllerVideoTexture =>
             Target != null && Target._LTCGI_LODs != null && Target._LTCGI_LODs.Length > 0 ? Target._LTCGI_LODs[0] : null;
 
         private void HandleTextureChanged(Texture texture)
         {
             source = texture;
+            ended = false;
             if (texture == null)
             {
-                if (rt != null) Bind(ControllerVideoTexture);
+                ShowNoPicture();
                 return;
             }
             EnsureRT(texture.width, texture.height);
@@ -127,22 +140,56 @@ namespace Basis.Integration.LTCGI
             Bind(rt);
         }
 
+        // As the screen output does: a looping player starts again on the same texture, so the
+        // last frame holds; otherwise the light goes to what the screen shows with no picture.
+        private void HandleEnded()
+        {
+            if (subscribed == null || subscribed.Loop) return;
+            ended = true;
+            ShowNoPicture();
+        }
+
+        // The screen output's placeholder, or black where it has none, as the screen shows
+        // before the first frame and after the end.
+        private void ShowNoPicture()
+        {
+            Texture placeholder = output != null ? output.PlaceholderTexture : null;
+            if (placeholder == null)
+            {
+                Bind(Texture2D.blackTexture);
+                return;
+            }
+            EnsureRT(placeholder.width, placeholder.height);
+            if (rt == null) return;
+            Rect r = ClampedSourceRect;
+            Graphics.Blit(placeholder, rt, r.size, r.min);
+            blittedRect = SourceRect;
+            Bind(rt);
+        }
+
         private void SimulateLateUpdate()
         {
-            if (source == null || rt == null) return;
-            if (SourceRect != blittedRect)
+            if (source != null && !ended && SourceRect != blittedRect)
             {
                 HandleTextureChanged(source);
                 return;
             }
-            // Cover art and paused video present no new frames; there is nothing to copy.
-            if (subscribed.PresentedFrameCount != blittedFrame) Blit();
+            if (ended && SourceRect != blittedRect) ShowNoPicture();
+            // Cover art and paused video present no new frames; there is nothing to copy. After
+            // the end, the next presented frame brings the video back.
+            if (source != null && rt != null && subscribed.PresentedFrameCount != blittedFrame)
+            {
+                ended = false;
+                Blit();
+                if (bound != rt) Bind(rt);
+            }
             EnsureBound();
         }
 
         private void Bind(Texture texture)
         {
             if (Target == null) return;
+            bound = texture;
             if (HasBlurChain)
                 Target._SetVideoTexture(texture);
             else
@@ -155,10 +202,10 @@ namespace Basis.Integration.LTCGI
         // Blur-chain shaders sample LOD0 directly too.
         private void EnsureBound()
         {
-            if (Target == null) return;
+            if (Target == null || bound == null) return;
             bool blurChain = HasBlurChain;
-            bool dropped = Shader.GetGlobalTexture(IdLod0) != rt
-                || (blurChain && Target.BlurCRTInput.material != null && Target.BlurCRTInput.material.GetTexture(IdMainTex) != rt);
+            bool dropped = Shader.GetGlobalTexture(IdLod0) != bound
+                || (blurChain && Target.BlurCRTInput.material != null && Target.BlurCRTInput.material.GetTexture(IdMainTex) != bound);
             var lods = Target._LTCGI_LODs;
             if (blurChain && lods != null)
                 for (int j = 1; j < lods.Length && j - 1 < LodGlobalIds.Length; j++)
@@ -167,7 +214,7 @@ namespace Basis.Integration.LTCGI
                         Shader.SetGlobalTexture(LodGlobalIds[j - 1], lods[j]);
                         dropped = true;
                     }
-            if (dropped) Bind(rt);
+            if (dropped) Bind(bound);
         }
 
         private void Blit()

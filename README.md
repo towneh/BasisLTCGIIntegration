@@ -83,6 +83,7 @@ on a desktop target and refuses on any other.
 | --- | --- | --- |
 | **Player** | auto | The `BasisMediaPlayer` to read. Falls back to `GetComponentInParent`. |
 | **Target** | auto | The `LTCGI_UdonAdapter` to feed. The setup menu fills it in; otherwise it falls back to the first one in the scene. |
+| **Output** | auto | The `BasisVideoMaterialOutput` whose screen the light matches: its flips, projection and placeholder. Falls back to the first one under the player. Set it when the screen's output sits elsewhere. |
 | **Max Resolution** | 1024 | Longest side of the texture handed to LTCGI. Larger video is scaled down. |
 | **Source Rect** | (0, 0, 1, 1) | The part of the picture handed to LTCGI, in the UVs the screen shows it with. For a screen whose UVs cover only part of the frame, set it to that part and give the `LTCGI_Screen`'s quad UVs from 0 to 1, so the light and reflections match the screen and nothing outside it reaches LTCGI. It can change at runtime, for a screen that swaps its UV layout. |
 
@@ -92,18 +93,21 @@ The adapter subscribes to `BasisMediaPlayer.OnOutputTextureChanged`, copies each
 frame into a mipmapped RenderTexture it owns, and binds that texture to LTCGI. LTCGI reads the
 mip levels as blur for rough surfaces.
 
-The copy takes its flips, projection mode and stereo eye from the `BasisVideoMaterialOutput` on
-the player or its children, the one that drives its screen, so the light matches the picture
-without any settings of its own. For side-by-side and over-under sources, that means the half
+The copy takes its flips, projection mode and stereo eye from the screen's
+`BasisVideoMaterialOutput` (**Output**, or the first one on the player or its children), so the
+light matches the picture without any settings of its own. For side-by-side and over-under sources, that means the half
 the screen shows.
 
 By default a desktop bake sends the texture through LTCGI's blur chain. With Fast Sampling,
 which LTCGI forces outside desktop builds, it's bound to the texture LTCGI samples directly, so
 the light works on Quest too.
 
-When the player stops, or the adapter is disabled, LTCGI gets the controller's own video
-texture back. If something clears LTCGI's bindings at runtime (a Desktop/VR switch, a render
-pipeline rebuild), the adapter notices and binds again on the next frame.
+With no picture, the light follows the screen. Before the first frame, after the player closes
+and when a video ends (unless it loops), LTCGI gets the output's placeholder, or black where it
+has none. The next presented frame brings the video back. When the adapter is disabled, LTCGI
+gets the controller's own video texture back. If something clears LTCGI's bindings at runtime
+(a Desktop/VR switch, a render pipeline rebuild), the adapter notices and binds again on the
+next frame.
 
 ## Troubleshooting
 
