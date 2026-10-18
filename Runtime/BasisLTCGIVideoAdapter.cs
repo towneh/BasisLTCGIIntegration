@@ -35,8 +35,8 @@ namespace Basis.Integration.LTCGI
         [Tooltip("Longest side of the texture handed to LTCGI, in pixels. Larger sources are scaled down. Area light and glossy reflections rarely need more.")]
         [Min(16)] public int MaxResolution = 1024;
 
-        [Tooltip("Part of the picture to hand to LTCGI, in the UVs the screen shows it with. (0, 0, 1, 1) is the whole frame. For a screen that shows part of the frame, set this to that part and give the LTCGI screen UVs from 0 to 1.")]
-        public Rect SourceRect = new Rect(0f, 0f, 1f, 1f);
+        [Tooltip("Parts of the picture to hand to LTCGI, in the UVs the screen shows it with, side by side in this order. One part of (0, 0, 1, 1) is the whole frame. With n parts, part i fills u from i/n to (i+1)/n of the texture LTCGI reads, so the LTCGI screen for that part takes those UVs.")]
+        public Rect[] SourceRects = { new Rect(0f, 0f, 1f, 1f) };
 
         private BasisMediaPlayer subscribed;
         private BasisVideoMaterialOutput output;
@@ -44,9 +44,11 @@ namespace Basis.Integration.LTCGI
         // disables itself.
         private static BasisLTCGIVideoAdapter active;
         private RenderTexture rt;
+        // One part's column, copied into rt when there's more than one part.
+        private RenderTexture partRT;
         private Texture source;
         private long blittedFrame = -1;
-        private Rect blittedRect;
+        private Rect[] blittedRects;
         private Texture bound;
         private bool ended;
 
@@ -161,20 +163,18 @@ namespace Basis.Integration.LTCGI
             }
             EnsureRT(placeholder.width, placeholder.height);
             if (rt == null) return;
-            Rect r = ClampedSourceRect;
-            Graphics.Blit(placeholder, rt, r.size, r.min);
-            blittedRect = SourceRect;
+            CopyParts(placeholder, Vector2.one, Vector2.zero);
             Bind(rt);
         }
 
         private void SimulateLateUpdate()
         {
-            if (source != null && !ended && SourceRect != blittedRect)
+            if (source != null && !ended && PartsChanged)
             {
                 HandleTextureChanged(source);
                 return;
             }
-            if (ended && SourceRect != blittedRect) ShowNoPicture();
+            if (ended && PartsChanged) ShowNoPicture();
             // Cover art and paused video present no new frames; there is nothing to copy. After
             // the end, the next presented frame brings the video back.
             if (source != null && rt != null && subscribed.PresentedFrameCount != blittedFrame)
@@ -233,51 +233,107 @@ namespace Basis.Integration.LTCGI
             if (flipV && flipH) BasisVideoOutputMath.ApplyBothFlip(ref scale, ref offset);
             else if (flipV) BasisVideoOutputMath.ApplyVerticalFlip(ref scale, ref offset);
             else if (flipH) BasisVideoOutputMath.ApplyHorizontalFlip(ref scale, ref offset);
-            // The rectangle is in the UVs the screen shows, so it goes on after the projection and flips.
-            Rect r = ClampedSourceRect;
-            offset += Vector2.Scale(scale, r.min);
-            scale = Vector2.Scale(scale, r.size);
-            Graphics.Blit(source, rt, scale, offset);
+            CopyParts(source, scale, offset);
             blittedFrame = subscribed.PresentedFrameCount;
-            blittedRect = SourceRect;
         }
 
-        private Rect ClampedSourceRect
+        // The parts are in the UVs the screen shows, so each goes on after the projection and flips.
+        private void CopyParts(Texture from, Vector2 scale, Vector2 offset)
+        {
+            Rect[] parts = Parts;
+            if (parts.Length == 1)
+            {
+                Graphics.Blit(from, rt, Vector2.Scale(scale, parts[0].size), offset + Vector2.Scale(scale, parts[0].min));
+            }
+            else
+            {
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    Graphics.Blit(from, partRT, Vector2.Scale(scale, parts[i].size), offset + Vector2.Scale(scale, parts[i].min));
+                    Graphics.CopyTexture(partRT, 0, 0, 0, 0, partRT.width, partRT.height, rt, 0, 0, i * partRT.width, 0);
+                }
+                rt.GenerateMips();
+            }
+            blittedRects = SourceRects != null ? (Rect[])SourceRects.Clone() : null;
+        }
+
+        private bool PartsChanged
         {
             get
             {
-                Rect r = Rect.MinMaxRect(Mathf.Clamp01(SourceRect.xMin), Mathf.Clamp01(SourceRect.yMin),
-                    Mathf.Clamp01(SourceRect.xMax), Mathf.Clamp01(SourceRect.yMax));
-                return r.width > 0f && r.height > 0f ? r : new Rect(0f, 0f, 1f, 1f);
+                if (SourceRects == null || blittedRects == null) return SourceRects != blittedRects;
+                if (SourceRects.Length != blittedRects.Length) return true;
+                for (int i = 0; i < SourceRects.Length; i++)
+                    if (SourceRects[i] != blittedRects[i]) return true;
+                return false;
+            }
+        }
+
+        // SourceRects clamped to the frame; an empty or degenerate part is the whole frame.
+        private Rect[] Parts
+        {
+            get
+            {
+                if (SourceRects == null || SourceRects.Length == 0) return new[] { new Rect(0f, 0f, 1f, 1f) };
+                var parts = new Rect[SourceRects.Length];
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    Rect s = SourceRects[i];
+                    Rect r = Rect.MinMaxRect(Mathf.Clamp01(s.xMin), Mathf.Clamp01(s.yMin), Mathf.Clamp01(s.xMax), Mathf.Clamp01(s.yMax));
+                    parts[i] = r.width > 0f && r.height > 0f ? r : new Rect(0f, 0f, 1f, 1f);
+                }
+                return parts;
             }
         }
 
         private void EnsureRT(int frameWidth, int frameHeight)
         {
-            Rect r = ClampedSourceRect;
-            int sourceWidth = Mathf.RoundToInt(frameWidth * r.width);
-            int sourceHeight = Mathf.RoundToInt(frameHeight * r.height);
-            if (sourceWidth <= 0 || sourceHeight <= 0) return;
-            float fit = Mathf.Min(1f, (float)MaxResolution / Mathf.Max(sourceWidth, sourceHeight));
-            int w = Mathf.Max(1, Mathf.RoundToInt(sourceWidth * fit));
-            int h = Mathf.Max(1, Mathf.RoundToInt(sourceHeight * fit));
-            if (rt != null && rt.width == w && rt.height == h) return;
+            Rect[] parts = Parts;
+            int partWidth = 0, partHeight = 0;
+            foreach (Rect r in parts)
+            {
+                partWidth = Mathf.Max(partWidth, Mathf.RoundToInt(frameWidth * r.width));
+                partHeight = Mathf.Max(partHeight, Mathf.RoundToInt(frameHeight * r.height));
+            }
+            if (partWidth <= 0 || partHeight <= 0) return;
+            float fit = Mathf.Min(1f, (float)MaxResolution / Mathf.Max(partWidth * parts.Length, partHeight));
+            int pw = Mathf.Max(1, Mathf.RoundToInt(partWidth * fit));
+            int h = Mathf.Max(1, Mathf.RoundToInt(partHeight * fit));
+            int w = pw * parts.Length;
+            bool packed = parts.Length > 1;
+            if (rt != null && rt.width == w && rt.height == h && (partRT != null) == packed) return;
             ReleaseRT();
-            // LTCGI samples this at mip levels in place of blur, so it needs a full chain.
+            // LTCGI samples this at mip levels in place of blur, so it needs a full chain. Packed parts are copied in
+            // after rendering, so their mips are generated once all are in.
             rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
             {
                 name = "BasisLTCGIVideo",
                 wrapMode = TextureWrapMode.Clamp,
                 filterMode = FilterMode.Trilinear,
                 useMipMap = true,
-                autoGenerateMips = true,
+                autoGenerateMips = !packed,
             };
             rt.Create();
+            if (packed)
+            {
+                partRT = new RenderTexture(pw, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
+                {
+                    name = "BasisLTCGIVideoPart",
+                    wrapMode = TextureWrapMode.Clamp,
+                };
+                partRT.Create();
+            }
             blittedFrame = -1;
         }
 
         private void ReleaseRT()
         {
+            if (partRT != null)
+            {
+                partRT.Release();
+                if (Application.isPlaying) Destroy(partRT); else DestroyImmediate(partRT);
+                partRT = null;
+            }
             if (rt == null) return;
             rt.Release();
             if (Application.isPlaying) Destroy(rt); else DestroyImmediate(rt);

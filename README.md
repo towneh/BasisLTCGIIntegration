@@ -85,7 +85,7 @@ on a desktop target and refuses on any other.
 | **Target** | auto | The `LTCGI_UdonAdapter` to feed. The setup menu fills it in; otherwise it falls back to the first one in the scene. |
 | **Output** | auto | The `BasisVideoMaterialOutput` whose screen the light matches: its flips, projection and placeholder. Falls back to the first one under the player. Set it when the screen's output sits elsewhere. |
 | **Max Resolution** | 1024 | Longest side of the texture handed to LTCGI. Larger video is scaled down. |
-| **Source Rect** | (0, 0, 1, 1) | The part of the picture handed to LTCGI, in the UVs the screen shows it with. For a screen whose UVs cover only part of the frame, set it to that part and give the `LTCGI_Screen`'s quad UVs from 0 to 1, so the light and reflections match the screen and nothing outside it reaches LTCGI. It can change at runtime, for a screen that swaps its UV layout. |
+| **Source Rects** | one, (0, 0, 1, 1) | The parts of the picture handed to LTCGI, in the UVs the screen shows them with, side by side in this order. With one part, set it to the part of the frame the screen shows and give the `LTCGI_Screen`'s quad UVs from 0 to 1, so the light and reflections match the screen and nothing outside it reaches LTCGI. With n parts, for one picture spread over several LTCGI screens (a screen in panels), part i fills u from i/n to (i+1)/n of the texture LTCGI reads, so the quad of the screen for that part takes those UVs. Parts can change at runtime, for a screen that swaps its UV layout. |
 
 ## How it works
 
