@@ -115,6 +115,7 @@ namespace Basis.Integration.LTCGI
             subscribed = null;
             output = null;
             source = null;
+            blittedFrame = -1;
             ended = false;
             // Hand LTCGI back its own texture before releasing ours, so nothing samples a
             // destroyed RenderTexture.
@@ -176,12 +177,21 @@ namespace Basis.Integration.LTCGI
             }
             if (ended && PartsChanged) ShowNoPicture();
             // Cover art and paused video present no new frames; there is nothing to copy. After
-            // the end, the next presented frame brings the video back.
-            if (source != null && rt != null && subscribed.PresentedFrameCount != blittedFrame)
+            // the end, only a frame presented once the player leaves Ended brings the video back,
+            // at the video's size rather than the placeholder's. The poll that reports the end
+            // can also count the last frames before it, so frames counted while still Ended are
+            // taken as seen.
+            if (ended && subscribed.State == BmState.Ended)
+                blittedFrame = subscribed.PresentedFrameCount;
+            else if (source != null && subscribed.PresentedFrameCount != blittedFrame)
             {
-                ended = false;
-                Blit();
-                if (bound != rt) Bind(rt);
+                if (ended) EnsureRT(source.width, source.height);
+                if (rt != null)
+                {
+                    ended = false;
+                    Blit();
+                    if (bound != rt) Bind(rt);
+                }
             }
             EnsureBound();
         }
@@ -247,6 +257,8 @@ namespace Basis.Integration.LTCGI
             }
             else
             {
+                // CopyTexture needs CopyTextureSupport.Basic. Every graphics API Basis builds for
+                // (D3D11, D3D12, Vulkan) has it; a GLES-only target without it would need a shader path.
                 for (int i = 0; i < parts.Length; i++)
                 {
                     Graphics.Blit(from, partRT, Vector2.Scale(scale, parts[i].size), offset + Vector2.Scale(scale, parts[i].min));
@@ -323,7 +335,6 @@ namespace Basis.Integration.LTCGI
                 };
                 partRT.Create();
             }
-            blittedFrame = -1;
         }
 
         private void ReleaseRT()
@@ -338,7 +349,6 @@ namespace Basis.Integration.LTCGI
             rt.Release();
             if (Application.isPlaying) Destroy(rt); else DestroyImmediate(rt);
             rt = null;
-            blittedFrame = -1;
         }
     }
 }
