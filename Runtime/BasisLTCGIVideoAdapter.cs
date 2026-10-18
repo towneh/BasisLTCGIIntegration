@@ -32,6 +32,9 @@ namespace Basis.Integration.LTCGI
         [Tooltip("Longest side of the texture handed to LTCGI, in pixels. Larger sources are scaled down. Area light and glossy reflections rarely need more.")]
         [Min(16)] public int MaxResolution = 1024;
 
+        [Tooltip("Part of the picture to hand to LTCGI, in the UVs the screen shows it with. (0, 0, 1, 1) is the whole frame. For a screen that shows part of the frame, set this to that part and give the LTCGI screen UVs from 0 to 1.")]
+        public Rect SourceRect = new Rect(0f, 0f, 1f, 1f);
+
         private BasisMediaPlayer subscribed;
         private BasisVideoMaterialOutput output;
         // LTCGI has one live video input, so the first adapter enabled takes it and any other
@@ -40,6 +43,7 @@ namespace Basis.Integration.LTCGI
         private RenderTexture rt;
         private Texture source;
         private long blittedFrame = -1;
+        private Rect blittedRect;
 
         private static readonly int IdMainTex = Shader.PropertyToID("_MainTex");
         private static readonly int IdLod0 = Shader.PropertyToID("_Udon_LTCGI_Texture_LOD0");
@@ -126,6 +130,11 @@ namespace Basis.Integration.LTCGI
         private void SimulateLateUpdate()
         {
             if (source == null || rt == null) return;
+            if (SourceRect != blittedRect)
+            {
+                HandleTextureChanged(source);
+                return;
+            }
             // Cover art and paused video present no new frames; there is nothing to copy.
             if (subscribed.PresentedFrameCount != blittedFrame) Blit();
             EnsureBound();
@@ -177,12 +186,30 @@ namespace Basis.Integration.LTCGI
             if (flipV && flipH) BasisVideoOutputMath.ApplyBothFlip(ref scale, ref offset);
             else if (flipV) BasisVideoOutputMath.ApplyVerticalFlip(ref scale, ref offset);
             else if (flipH) BasisVideoOutputMath.ApplyHorizontalFlip(ref scale, ref offset);
+            // The rectangle is in the UVs the screen shows, so it goes on after the projection and flips.
+            Rect r = ClampedSourceRect;
+            offset += Vector2.Scale(scale, r.min);
+            scale = Vector2.Scale(scale, r.size);
             Graphics.Blit(source, rt, scale, offset);
             blittedFrame = subscribed.PresentedFrameCount;
+            blittedRect = SourceRect;
         }
 
-        private void EnsureRT(int sourceWidth, int sourceHeight)
+        private Rect ClampedSourceRect
         {
+            get
+            {
+                Rect r = Rect.MinMaxRect(Mathf.Clamp01(SourceRect.xMin), Mathf.Clamp01(SourceRect.yMin),
+                    Mathf.Clamp01(SourceRect.xMax), Mathf.Clamp01(SourceRect.yMax));
+                return r.width > 0f && r.height > 0f ? r : new Rect(0f, 0f, 1f, 1f);
+            }
+        }
+
+        private void EnsureRT(int frameWidth, int frameHeight)
+        {
+            Rect r = ClampedSourceRect;
+            int sourceWidth = Mathf.RoundToInt(frameWidth * r.width);
+            int sourceHeight = Mathf.RoundToInt(frameHeight * r.height);
             if (sourceWidth <= 0 || sourceHeight <= 0) return;
             float fit = Mathf.Min(1f, (float)MaxResolution / Mathf.Max(sourceWidth, sourceHeight));
             int w = Mathf.Max(1, Mathf.RoundToInt(sourceWidth * fit));

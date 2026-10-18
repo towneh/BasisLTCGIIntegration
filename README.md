@@ -84,6 +84,7 @@ on a desktop target and refuses on any other.
 | **Player** | auto | The `BasisMediaPlayer` to read. Falls back to `GetComponentInParent`. |
 | **Target** | auto | The `LTCGI_UdonAdapter` to feed. The setup menu fills it in; otherwise it falls back to the first one in the scene. |
 | **Max Resolution** | 1024 | Longest side of the texture handed to LTCGI. Larger video is scaled down. |
+| **Source Rect** | (0, 0, 1, 1) | The part of the picture handed to LTCGI, in the UVs the screen shows it with. For a screen whose UVs cover only part of the frame, set it to that part and give the `LTCGI_Screen`'s quad UVs from 0 to 1, so the light and reflections match the screen and nothing outside it reaches LTCGI. It can change at runtime, for a screen that swaps its UV layout. |
 
 ## How it works
 
