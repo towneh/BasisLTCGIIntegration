@@ -77,6 +77,58 @@ on a desktop target and refuses on any other.
 4. On the controller, click **Force Update**. Bake again whenever you change a screen's
    **Dynamic** flag or **Color Mode**.
 
+### A screen in panels
+
+LTCGI screens are flat quads, so a picture shown across several surfaces (an LED wall in
+sections, a screen that wraps round a booth, an angled or curved display) needs one LTCGI screen
+per flat panel. The adapter can feed them all from one player: each panel gets its own part of
+the picture, packed into one cell of the texture LTCGI reads. This needs a desktop build, as
+LTCGI allows only one screen elsewhere.
+
+1. **Add a quad per panel.** A child GameObject with a `MeshFilter` holding a quad that covers
+   the panel, facing the side it lights. It needs no renderer. Keep the corners in Unity's quad
+   order (bottom-left, bottom-right, top-left, top-right, seen from the lit side) with exactly
+   square corners. LTCGI reorders the corners of a quad whose edges aren't exactly perpendicular,
+   which turns an already ordered quad into a bow-tie, and its single-sided test then drops the
+   screen's reflections everywhere and its light wherever no shadowmap supplies it.
+2. **Make each quad a screen.** Add an `LTCGI_Screen`, tick **Dynamic**, and set **Color Mode**
+   to **Texture** with **`[Live Video]`**, as in *By hand*.
+3. **List the parts on the adapter.** In **Source Rects**, add one entry per panel, in a fixed
+   order: the part of the frame that panel shows, in the UVs the screen mesh shows it with. Part
+   0 is the first panel, part 1 the second, and so on.
+4. **Choose Columns.** LTCGI blurs the texture into 2:1 targets for rough surfaces, and it
+   blurs evenly only when the whole texture is close to that shape. The texture is
+   `Columns × cell width` across and `rows × cell height` high, where a cell is the largest
+   part's size. Pick the columns that bring it nearest 2:1:
+
+   | Panels | Each part | Columns | Texture |
+   | --- | --- | --- | --- |
+   | 2, the halves of a 16:9 frame | 8:9 | 0 (one row) | 16:9 |
+   | 4, the quarters of a 16:9 frame | 16:9 | 2 | 16:9 (one row would be 7:1) |
+   | 9, a wall of 3 × 3 panels about 1.4:1 each | 1.4:1 | 3 | 1.4:1 (one row would be 12.6:1) |
+
+   **Max Resolution** limits the longest side of the whole texture, so raise it with the
+   number of panels: at 2048, a 3 × 3 grid keeps cells about 680 px wide.
+5. **Give each quad its cell's UVs.** LTCGI reads the light through the screen mesh's UVs, so
+   part i's quad covers the cell `BasisLTCGIVideoAdapter.PartUv(i, count, columns)` returns.
+   From an editor script:
+
+   ```csharp
+   Rect cell = BasisLTCGIVideoAdapter.PartUv(i, adapter.SourceRects.Length, adapter.Columns);
+   quadMesh.uv = new[]
+   {
+       new Vector2(cell.xMin, cell.yMin), new Vector2(cell.xMax, cell.yMin),
+       new Vector2(cell.xMin, cell.yMax), new Vector2(cell.xMax, cell.yMax),
+   };
+   ```
+
+6. **Bake.** Click **Force Update** on the controller. LTCGI stores each screen's UVs when it
+   bakes, so bake again after changing the number of parts, **Columns** or a quad's UVs.
+
+The rectangles in **Source Rects** can change at runtime, for a screen whose mesh swaps between
+UV layouts: the next frame copies the new parts into the same cells. The number of parts and
+**Columns** set where the cells are, so keep those fixed once the quads are baked.
+
 ## Component reference
 
 | Field | Default | Purpose |
@@ -85,7 +137,8 @@ on a desktop target and refuses on any other.
 | **Target** | auto | The `LTCGI_UdonAdapter` to feed. The setup menu fills it in; otherwise it falls back to the first one in the scene. |
 | **Output** | auto | The `BasisVideoMaterialOutput` whose screen the light matches: its flips, projection and placeholder. Falls back to the first one under the player. Set it when the screen's output sits elsewhere. |
 | **Max Resolution** | 1024 | Longest side of the texture handed to LTCGI. Larger video is scaled down. |
-| **Source Rects** | one, (0, 0, 1, 1) | The parts of the picture handed to LTCGI, in the UVs the screen shows them with, side by side in this order. With one part, set it to the part of the frame the screen shows and give the `LTCGI_Screen`'s quad UVs from 0 to 1, so the light and reflections match the screen and nothing outside it reaches LTCGI. With n parts, for one picture spread over several LTCGI screens (a screen in panels), part i fills u from i/n to (i+1)/n of the texture LTCGI reads, so the quad of the screen for that part takes those UVs. Parts can change at runtime, for a screen that swaps its UV layout. |
+| **Source Rects** | one, (0, 0, 1, 1) | The parts of the picture handed to LTCGI, in the UVs the screen shows them with, in this order. With one part, set it to the part of the frame the screen shows and give the `LTCGI_Screen`'s quad UVs from 0 to 1, so the light and reflections match the screen and nothing outside it reaches LTCGI. With several, each part fills one cell of the texture LTCGI reads and the quad of the screen for that part takes the cell's UVs (see *A screen in panels*). The rectangles can change at runtime, for a screen that swaps its UV layout. |
+| **Columns** | 0 | Cells per row when there are several parts, filled left to right from the bottom row up. 0 puts every part in one row, part i of n covering u from i/n to (i+1)/n. Choose the columns that bring the whole texture nearest 2:1 (see *A screen in panels*). Cells left without a part are black. |
 
 ## How it works
 
@@ -120,6 +173,9 @@ next frame.
 | *"already feeds LTCGI's video input"* | Another player's adapter is driving the light. Disable that adapter, then enable this one. |
 | *"Too many screens in the scene!"* when baking for Android | LTCGI allows one screen outside desktop builds. Remove or disable the extra `LTCGI_Screen` components, then **Force Update**. |
 | The setup menu says the screen *"needs a MeshFilter with a quad or triangle mesh"* | LTCGI can only use a quad or a triangle as a screen. Use a quad, or the stock `VideoScreen16x9` mesh. |
+| With a screen in panels, glossy floors show grey bands across the reflection | The texture LTCGI blurs is far from 2:1, usually every part in one row. Set **Columns** (see *A screen in panels*), give the quads their new cells' UVs and **Force Update**. |
+| A panel's light comes from the wrong part of the picture | The quad's UVs don't cover its part's cell. Set them from `PartUv` with the adapter's current part count and **Columns**, then **Force Update**. |
+| A panel lights nothing, or its reflections are missing everywhere | Its quad's corners aren't in Unity's quad order with exactly square corners, so LTCGI reordered them into a bow-tie. Rebuild the quad (see *A screen in panels*, step 1). |
 
 ## License
 

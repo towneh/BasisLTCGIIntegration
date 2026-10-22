@@ -35,8 +35,11 @@ namespace Basis.Integration.LTCGI
         [Tooltip("Longest side of the texture handed to LTCGI, in pixels. Larger sources are scaled down. Area light and glossy reflections rarely need more.")]
         [Min(16)] public int MaxResolution = 1024;
 
-        [Tooltip("Parts of the picture to hand to LTCGI, in the UVs the screen shows it with, side by side in this order. One part of (0, 0, 1, 1) is the whole frame. With n parts, part i fills u from i/n to (i+1)/n of the texture LTCGI reads, so the LTCGI screen for that part takes those UVs.")]
+        [Tooltip("Parts of the picture to hand to LTCGI, in the UVs the screen shows it with, in this order. One part of (0, 0, 1, 1) is the whole frame. With several, each fills one cell of the texture LTCGI reads (see Columns and PartUv), so the LTCGI screen for that part takes the cell's UVs.")]
         public Rect[] SourceRects = { new Rect(0f, 0f, 1f, 1f) };
+
+        [Tooltip("Cells per row when there are several parts, filled left to right from the bottom row up. 0 puts every part in one row. LTCGI blurs its texture at a fixed 2:1, so a grid whose texture is near that shape blurs evenly both ways.")]
+        [Min(0)] public int Columns;
 
         private BasisMediaPlayer subscribed;
         private BasisVideoMaterialOutput output;
@@ -49,6 +52,7 @@ namespace Basis.Integration.LTCGI
         private Texture source;
         private long blittedFrame = -1;
         private Rect[] blittedRects;
+        private int blittedColumns;
         private Texture bound;
         private bool ended;
 
@@ -257,22 +261,49 @@ namespace Basis.Integration.LTCGI
             }
             else
             {
+                int columns = GridColumns(parts.Length, Columns);
+                // Cells with no part would otherwise blur stale or uninitialised texels into their neighbours.
+                if (columns * GridRows(parts.Length, columns) > parts.Length)
+                {
+                    RenderTexture previous = RenderTexture.active;
+                    Graphics.SetRenderTarget(rt);
+                    GL.Clear(false, true, Color.black);
+                    RenderTexture.active = previous;
+                }
                 // CopyTexture needs CopyTextureSupport.Basic. Every graphics API Basis builds for
                 // (D3D11, D3D12, Vulkan) has it; a GLES-only target without it would need a shader path.
                 for (int i = 0; i < parts.Length; i++)
                 {
                     Graphics.Blit(from, partRT, Vector2.Scale(scale, parts[i].size), offset + Vector2.Scale(scale, parts[i].min));
-                    Graphics.CopyTexture(partRT, 0, 0, 0, 0, partRT.width, partRT.height, rt, 0, 0, i * partRT.width, 0);
+                    Graphics.CopyTexture(partRT, 0, 0, 0, 0, partRT.width, partRT.height, rt, 0, 0,
+                        i % columns * partRT.width, i / columns * partRT.height);
                 }
                 rt.GenerateMips();
             }
             blittedRects = SourceRects != null ? (Rect[])SourceRects.Clone() : null;
+            blittedColumns = Columns;
         }
+
+        /// <summary>
+        /// The UVs of the cell part <paramref name="index"/> of <paramref name="count"/> fills in the texture LTCGI
+        /// reads, with <paramref name="columns"/> cells per row (0 for one row): the UVs that part's LTCGI screen takes.
+        /// </summary>
+        public static Rect PartUv(int index, int count, int columns)
+        {
+            int c = GridColumns(count, columns), r = GridRows(count, c);
+            return new Rect(index % c / (float)c, index / c / (float)r, 1f / c, 1f / r);
+        }
+
+        private static int GridColumns(int count, int columns) =>
+            Mathf.Clamp(columns <= 0 ? count : columns, 1, Mathf.Max(1, count));
+
+        private static int GridRows(int count, int columns) => Mathf.Max(1, (count + columns - 1) / columns);
 
         private bool PartsChanged
         {
             get
             {
+                if (Columns != blittedColumns) return true;
                 if (SourceRects == null || blittedRects == null) return SourceRects != blittedRects;
                 if (SourceRects.Length != blittedRects.Length) return true;
                 for (int i = 0; i < SourceRects.Length; i++)
@@ -308,12 +339,15 @@ namespace Basis.Integration.LTCGI
                 partHeight = Mathf.Max(partHeight, Mathf.RoundToInt(frameHeight * r.height));
             }
             if (partWidth <= 0 || partHeight <= 0) return;
-            float fit = Mathf.Min(1f, (float)MaxResolution / Mathf.Max(partWidth * parts.Length, partHeight));
-            int pw = Mathf.Max(1, Mathf.RoundToInt(partWidth * fit));
-            int h = Mathf.Max(1, Mathf.RoundToInt(partHeight * fit));
-            int w = pw * parts.Length;
+            int columns = GridColumns(parts.Length, Columns), rows = GridRows(parts.Length, columns);
+            float fit = Mathf.Min(1f, (float)MaxResolution / Mathf.Max(partWidth * columns, partHeight * rows));
+            // Rounded down, so the cells together stay within MaxResolution.
+            int pw = Mathf.Max(1, Mathf.FloorToInt(partWidth * fit + 1e-4f));
+            int ph = Mathf.Max(1, Mathf.FloorToInt(partHeight * fit + 1e-4f));
+            int w = pw * columns, h = ph * rows;
             bool packed = parts.Length > 1;
-            if (rt != null && rt.width == w && rt.height == h && (partRT != null) == packed) return;
+            if (rt != null && rt.width == w && rt.height == h && (partRT != null) == packed &&
+                (!packed || (partRT.width == pw && partRT.height == ph))) return;
             ReleaseRT();
             // LTCGI samples this at mip levels in place of blur, so it needs a full chain. Packed parts are copied in
             // after rendering, so their mips are generated once all are in.
@@ -328,7 +362,7 @@ namespace Basis.Integration.LTCGI
             rt.Create();
             if (packed)
             {
-                partRT = new RenderTexture(pw, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
+                partRT = new RenderTexture(pw, ph, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB)
                 {
                     name = "BasisLTCGIVideoPart",
                     wrapMode = TextureWrapMode.Clamp,
