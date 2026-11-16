@@ -131,7 +131,7 @@ namespace Basis.Integration.LTCGI
                 enabled = false;
                 return;
             }
-            if (Target == null) Target = FindFirstObjectByType<LTCGI_UdonAdapter>();
+            if (Target == null) Target = FindAnyObjectByType<LTCGI_UdonAdapter>();
             if (Target == null)
             {
                 BasisDebug.LogWarning("BasisLTCGIVideoAdapter: no LTCGI_UdonAdapter in the scene. Bake an LTCGI controller with at least one dynamic screen.", BasisDebug.LogTag.Video);

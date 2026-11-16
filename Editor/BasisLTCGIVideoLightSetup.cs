@@ -56,7 +56,7 @@ namespace Basis.Integration.LTCGI.Editor
 #endif
             }
 
-            var controller = Object.FindFirstObjectByType<LTCGI_Controller>();
+            var controller = Object.FindAnyObjectByType<LTCGI_Controller>();
             GameObject prefab = null;
             if (controller == null)
             {

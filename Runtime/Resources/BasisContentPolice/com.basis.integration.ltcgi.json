@@ -1,0 +1,6 @@
+{
+  "World": [
+    "LTCGI_UdonAdapter",
+    "Basis.Integration.LTCGI.BasisLTCGIVideoAdapter"
+  ]
+}
